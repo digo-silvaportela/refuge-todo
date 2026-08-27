@@ -27,13 +27,14 @@
   }
 
   *{box-sizing:border-box}
+  html{ font-size:clamp(16px, .55vw + 13px, 22px); }
   html,body{ height:100%; margin:0; }
 
   body{
     background:#2c1a17;
     color:var(--cream);
     font-family:'VT323',monospace;
-    font-size:20px;
+    font-size:1.25rem;
     display:flex;
     flex-direction:column;
     min-height:100vh;
@@ -47,6 +48,8 @@
     height:100%;
     z-index:-2;
     background:#2c1a17;
+    object-fit:cover;
+    object-position:center 62%;
   }
 
   .vignette{
@@ -57,9 +60,16 @@
     background:radial-gradient(ellipse at 50% 46%, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 45%, rgba(10,5,8,.4) 100%);
   }
 
+  #confetti{
+    position:fixed;
+    inset:0;
+    z-index:800;
+    pointer-events:none;
+  }
+
   .wrap{
     width:100%;
-    max-width:1180px;
+    max-width:clamp(680px, 78vw, 1440px);
     margin:0 auto;
     padding:1.8rem 1.2rem 0;
     flex:1;
@@ -426,6 +436,7 @@
 
 <canvas id="scene"></canvas>
 <div class="vignette"></div>
+<canvas id="confetti"></canvas>
 
 <div class="wrap">
   <header>
@@ -909,6 +920,92 @@ const bgx = bg.getContext('2d');
 bgx.scale(SCALE, SCALE);
 bgx.imageSmoothingEnabled = true;
 
+/* ═══ CONFETTIS (célébration de tâche terminée) ═══ */
+const confettiCanvas = document.getElementById('confetti');
+const cctx = confettiCanvas.getContext('2d');
+let confettiDPR = Math.min(2, window.devicePixelRatio || 1);
+let confetti = [];
+
+function resizeConfettiCanvas(){
+  confettiDPR = Math.min(2, window.devicePixelRatio || 1);
+  confettiCanvas.width = Math.floor(window.innerWidth * confettiDPR);
+  confettiCanvas.height = Math.floor(window.innerHeight * confettiDPR);
+  cctx.setTransform(confettiDPR, 0, 0, confettiDPR, 0, 0);
+}
+resizeConfettiCanvas();
+window.addEventListener('resize', resizeConfettiCanvas);
+
+const CONFETTI_COLORS = ['#e0943f','#7fbf8f','#8b93d9','#f2e4c8','#e07a5f','#ffd27a','#c9a878'];
+const CONFETTI_LIFE = 3000; // ms — chute puis évaporation progressive
+
+function spawnConfetti(){
+  const vw = window.innerWidth;
+  const count = 130;
+  for(let i=0;i<count;i++){
+    confetti.push({
+      x: Math.random()*vw,
+      y: -30 - Math.random()*260,
+      vx: (Math.random()-0.5)*2.4,
+      vy: 1.6 + Math.random()*3,
+      w: 4 + Math.random()*5,
+      h: 6 + Math.random()*7,
+      rot: Math.random()*Math.PI*2,
+      vrot: (Math.random()-0.5)*0.28,
+      color: CONFETTI_COLORS[Math.floor(Math.random()*CONFETTI_COLORS.length)],
+      shape: Math.random() < 0.4 ? 'circle' : 'rect',
+      born: performance.now(),
+      life: CONFETTI_LIFE + Math.random()*500
+    });
+  }
+}
+
+function updateAndDrawConfetti(now){
+  if(!confetti.length) return;
+
+  cctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+  confetti.forEach(p => {
+    const age = now - p.born;
+    const t = age / p.life;
+
+    if(t < 0.62){
+      p.vy += 0.045;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rot += p.vrot;
+      p.alpha = 1;
+    } else {
+      // phase d'évaporation : ralentit, remonte légèrement, s'estompe pas à pas
+      const ft = Math.min(1, (t - 0.62) / 0.38);
+      p.vx *= 0.95;
+      p.vy *= 0.9;
+      p.x += p.vx;
+      p.y += p.vy - ft*0.9;
+      p.rot += p.vrot*0.4;
+      p.alpha = Math.max(0, 1 - ft);
+    }
+
+    cctx.save();
+    cctx.globalAlpha = p.alpha;
+    cctx.translate(p.x, p.y);
+    cctx.rotate(p.rot);
+    const scale = 0.55 + 0.45*p.alpha;
+    cctx.fillStyle = p.color;
+    if(p.shape === 'circle'){
+      cctx.beginPath();
+      cctx.arc(0, 0, (p.w/2)*scale, 0, Math.PI*2);
+      cctx.fill();
+    } else {
+      cctx.fillRect(-(p.w/2)*scale, -(p.h/2)*scale, p.w*scale, p.h*scale);
+    }
+    cctx.restore();
+  });
+
+  confetti = confetti.filter(p => (now - p.born) < p.life);
+
+  if(!confetti.length) cctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+}
+
 /* ── utilitaires ── */
 function dot(c,x,y,r,color){ c.fillStyle=color; c.beginPath(); c.arc(x,y,r,0,Math.PI*2); c.fill(); }
 
@@ -942,22 +1039,39 @@ const FP_IN  = { x0:38, x1:102, yTop:44, yBottom:98 };
 const FIRE_CX = (FP_IN.x0+FP_IN.x1)/2;
 const FIRE_BASE_Y = FP_IN.yBottom - 2;
 const FIRE_W = (FP_IN.x1-FP_IN.x0) * 0.82;
+const CELEBRATION_MS = 2600;
 
-let fireBoost = 0;
+let flashPulse = 0;
 let embers = [];
+let celebrating = false;
+let celebrationStart = 0;
+
 function bumpFire(){
-  fireBoost = Math.min(12, fireBoost + 4.5);
-  for(let i=0;i<10;i++){
+  celebrating = true;
+  celebrationStart = performance.now();
+  flashPulse = 1;
+  for(let i=0;i<20;i++){
     embers.push({
-      x: FIRE_CX + (Math.random()-0.5)*FIRE_W*0.7,
+      x: FIRE_CX + (Math.random()-0.5)*FIRE_W*0.9,
       y: FIRE_BASE_Y - 4,
-      vx: (Math.random()-0.5)*0.35,
-      vy: -0.5-Math.random()*0.7,
+      vx: (Math.random()-0.5)*0.6,
+      vy: -0.8-Math.random()*1.1,
       life: 1,
-      decay: 0.014+Math.random()*0.014,
+      decay: 0.008+Math.random()*0.01,
+      size: 0.6+Math.random()*0.8,
       color: Math.random() < 0.5 ? '#ffdf8a' : '#ff9a4d'
     });
   }
+  spawnConfetti();
+}
+
+// 0 → 1 → 0 sur CELEBRATION_MS : montée rapide, décroissance plus lente
+function celebrationProgress(ts){
+  if(!celebrating) return 0;
+  const elapsed = ts - celebrationStart;
+  if(elapsed >= CELEBRATION_MS){ celebrating = false; return 0; }
+  const t = elapsed / CELEBRATION_MS;
+  return t < 0.12 ? (t/0.12) : Math.max(0, 1 - (t-0.12)/0.88);
 }
 
 /* ── guirlande lumineuse ── */
@@ -1317,52 +1431,89 @@ const animals = [
   { x:72,  y:132, w:15, h:11, pose:'stand', ear:'pointy', dir:1,       body:'#f0e0c8', outline:'#5a4530', belly:'#fff8ea', eye:'#3a2c28', nose:'#c9758a', collar:'#e0943f', phase:1.6 }
 ];
 
-/* ── feu de cheminée (flammes douces en courbes de Bézier) ── */
-function flameShape(c,x,baseY,w,h,color,alpha){
+/* ── feu de cheminée (langues multiples, balancement, flash à la complétion) ── */
+function flameShape(c,x,baseY,w,h,color,alpha,sway){
+  sway = sway || 0;
   c.save();
   if(alpha!==undefined) c.globalAlpha = alpha;
   c.fillStyle = color;
   c.beginPath();
   c.moveTo(x, baseY);
-  c.bezierCurveTo(x-w*0.5, baseY-h*0.35, x-w*0.22, baseY-h*0.85, x, baseY-h);
-  c.bezierCurveTo(x+w*0.22, baseY-h*0.85, x+w*0.5, baseY-h*0.35, x, baseY);
+  c.bezierCurveTo(x-w*0.55, baseY-h*0.4, x-w*0.16+sway*0.6, baseY-h*0.94, x+sway, baseY-h);
+  c.bezierCurveTo(x+w*0.16+sway*0.6, baseY-h*0.94, x+w*0.55, baseY-h*0.4, x, baseY);
   c.closePath();
   c.fill();
   c.restore();
 }
-function drawFireplaceFlame(c,t){
-  const flick = Math.sin(t*9)*0.4 + Math.sin(t*4.3+1)*0.3;
-  const boost = fireBoost;
-  const h = Math.min(24, 8 + flick + boost*1.15);
+let currentCeleb = 0; // 0..1, recalculé chaque frame dans la boucle principale
 
-  flameShape(c, FIRE_CX, FIRE_BASE_Y, FIRE_W*0.85+boost*0.4, h, '#c73e1d', 0.92);
-  flameShape(c, FIRE_CX, FIRE_BASE_Y, FIRE_W*0.55+boost*0.3, h*0.72, '#ff8a3d', 0.9);
-  flameShape(c, FIRE_CX, FIRE_BASE_Y, FIRE_W*0.28+boost*0.15, h*0.46, '#ffe58a', 0.95);
+function drawFireplaceFlame(c,t){
+  const flick = Math.sin(t*9)*0.6 + Math.sin(t*4.3+1)*0.5 + Math.sin(t*15.4)*0.25;
+  const celeb = currentCeleb;
+  const h = Math.min(47, 17 + flick + celeb*32);
+  const swayA = Math.sin(t*2.2)*(0.8+celeb*2.2);
+  const swayB = Math.sin(t*3.1+1.7)*(1.1+celeb*3);
+  const swayC = Math.sin(t*2.6+3.4)*(0.7+celeb*2);
+
+  // deux pointes secondaires, proches du centre, presque aussi hautes que la principale
+  flameShape(c, FIRE_CX-FIRE_W*0.09, FIRE_BASE_Y, FIRE_W*0.15+celeb*0.16, h*0.78, '#b83a1c', 0.75, swayA);
+  flameShape(c, FIRE_CX+FIRE_W*0.08, FIRE_BASE_Y, FIRE_W*0.14+celeb*0.16, h*0.82, '#b83a1c', 0.75, swayC);
+
+  // corps principal — nettement plus haut que large, s'embrase pendant la célébration
+  flameShape(c, FIRE_CX, FIRE_BASE_Y, FIRE_W*0.24+celeb*0.26, h, '#c73e1d', 0.92, swayB*0.3);
+  flameShape(c, FIRE_CX, FIRE_BASE_Y, FIRE_W*0.16+celeb*0.19, h*0.74, '#ff8a3d', 0.9, swayB);
+  flameShape(c, FIRE_CX, FIRE_BASE_Y, FIRE_W*0.09+celeb*0.12, h*0.46, '#ffe58a', 0.95, swayA*0.6);
+  if(celeb > 0.08){
+    flameShape(c, FIRE_CX, FIRE_BASE_Y, FIRE_W*0.05+celeb*0.07, h*0.26, '#fff6df', 0.9*celeb, swayA*0.3);
+  }
 
   embers.forEach(e => {
     c.globalAlpha = Math.max(0, e.life);
     c.fillStyle = e.color;
-    c.beginPath(); c.arc(e.x, e.y, 0.7, 0, Math.PI*2); c.fill();
+    c.beginPath(); c.arc(e.x, e.y, e.size || 0.7, 0, Math.PI*2); c.fill();
     c.globalAlpha = 1;
   });
 }
-function updateEmbers(){
+function updateEmbers(ts){
   embers.forEach(e => { e.x += e.vx; e.y += e.vy; e.life -= e.decay; });
   embers = embers.filter(e => e.life > 0);
+  if(celebrating && Math.random() < 0.5){
+    embers.push({
+      x: FIRE_CX + (Math.random()-0.5)*FIRE_W*(0.9+currentCeleb*0.6),
+      y: FIRE_BASE_Y - 4 - currentCeleb*10,
+      vx: (Math.random()-0.5)*(0.6+currentCeleb*0.8),
+      vy: -0.8-Math.random()*1.3-currentCeleb*0.8,
+      life: 1,
+      decay: 0.008+Math.random()*0.01,
+      size: 0.6+Math.random()*0.8,
+      color: Math.random() < 0.5 ? '#ffdf8a' : '#ff9a4d'
+    });
+  }
 }
 function drawFireGlow(c,t){
-  const r = 42 + Math.sin(t*3)*3 + fireBoost*3.4;
+  const celeb = currentCeleb;
+  const r = 42 + Math.sin(t*3)*3 + celeb*150;
   const grad = c.createRadialGradient(FIRE_CX, FIRE_BASE_Y-6, 3, FIRE_CX, FIRE_BASE_Y-6, r);
-  grad.addColorStop(0, 'rgba(255,170,90,'+(0.4+fireBoost*0.03)+')');
-  grad.addColorStop(0.5, 'rgba(200,90,50,'+(0.14+fireBoost*0.015)+')');
+  grad.addColorStop(0, 'rgba(255,170,90,'+(0.4+celeb*0.42)+')');
+  grad.addColorStop(0.5, 'rgba(200,90,50,'+(0.14+celeb*0.2)+')');
   grad.addColorStop(1, 'rgba(200,90,50,0)');
   c.fillStyle = grad;
   c.fillRect(0,0,W,H);
+
+  if(flashPulse > 0){
+    const fr = 18 + flashPulse*46;
+    const flash = c.createRadialGradient(FIRE_CX, FIRE_BASE_Y-4, 0, FIRE_CX, FIRE_BASE_Y-4, fr);
+    flash.addColorStop(0, 'rgba(255,244,214,'+(0.6*flashPulse)+')');
+    flash.addColorStop(1, 'rgba(255,244,214,0)');
+    c.fillStyle = flash;
+    c.fillRect(0,0,W,H);
+  }
 }
 
 /* ── boucle d'animation ── */
 function frame(ts){
   const t = ts/1000;
+  currentCeleb = celebrationProgress(ts);
 
   ctx.clearRect(0,0,W,H);
   ctx.drawImage(bg, 0, 0, W, H);
@@ -1385,7 +1536,7 @@ function frame(ts){
     drawAnimal(ctx, a.x, a.y, a);
   });
 
-  updateEmbers();
+  updateEmbers(ts);
   drawFireplaceFlame(ctx,t);
 
   dust.forEach(d => {
@@ -1396,7 +1547,9 @@ function frame(ts){
     ctx.beginPath(); ctx.arc(d.x, d.y, 0.5, 0, Math.PI*2); ctx.fill();
   });
 
-  if(fireBoost > 0) fireBoost = Math.max(0, fireBoost - 0.04);
+  if(flashPulse > 0) flashPulse = Math.max(0, flashPulse - 0.045);
+
+  updateAndDrawConfetti(ts);
 
   requestAnimationFrame(frame);
 }
