@@ -294,6 +294,48 @@
   .ctx-menu button:hover{ background:rgba(255,255,255,.08); }
   .ctx-menu button.danger:hover{ background:rgba(224,122,95,.18); color:var(--danger); }
 
+  /* ═══ CONFIRMATION DE SUPPRESSION ═══ */
+  .confirm-overlay{
+    position:fixed; inset:0; z-index:1100;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(10,6,5,.6);
+    backdrop-filter:blur(2px);
+    padding:1rem;
+  }
+  .confirm-box{
+    width:100%; max-width:320px;
+    background:#241a15;
+    border:3px solid var(--panel-border-lit);
+    box-shadow:5px 5px 0 rgba(0,0,0,.5);
+    padding:1.3rem 1.2rem;
+    text-align:center;
+  }
+  .confirm-box p{
+    color:var(--cream);
+    font-size:1.05rem;
+    margin:0 0 .5rem;
+    line-height:1.35;
+  }
+  .confirm-task-text{
+    color:var(--cream-dim);
+    font-style:italic;
+    font-size:.92rem;
+    margin:0 0 1.1rem;
+    word-break:break-word;
+  }
+  .confirm-actions{ display:flex; gap:.6rem; justify-content:center; }
+  .confirm-actions button{
+    font-family:'Silkscreen',monospace;
+    font-size:.76rem;
+    padding:.6rem 1rem;
+    border:2px solid var(--panel-border-lit);
+    box-shadow:2px 2px 0 var(--ink);
+    cursor:pointer;
+  }
+  .confirm-actions .btn-cancel{ background:transparent; color:var(--cream); }
+  .confirm-actions .btn-danger{ background:var(--danger); color:var(--ink); border-color:#c85a3f; }
+  .confirm-actions button:active{ transform:translate(1px,1px); box-shadow:1px 1px 0 var(--ink); }
+
   footer{
     text-align:center;
     color:var(--cream-dim);
@@ -574,7 +616,7 @@ function renderCard(t){
   del.title = 'Supprimer';
   del.setAttribute('aria-label', 'Supprimer la tâche');
   del.textContent = '×';
-  del.addEventListener('click', e => { e.stopPropagation(); deleteTask(t.id); });
+  del.addEventListener('click', e => { e.stopPropagation(); requestDeleteTask(t.id, t.text); });
 
   card.appendChild(chk);
   card.appendChild(text);
@@ -645,6 +687,62 @@ function enterEditMode(card, taskId){
   input.addEventListener('click', e => e.stopPropagation());
 }
 
+/* ── confirmation avant suppression ── */
+let confirmEl = null;
+function closeConfirmDelete(){
+  if(confirmEl){ confirmEl.remove(); confirmEl = null; }
+  document.removeEventListener('keydown', onConfirmKey, true);
+}
+function onConfirmKey(e){ if(e.key === 'Escape') closeConfirmDelete(); }
+
+function requestDeleteTask(id, text){
+  closeContextMenu();
+  closeConfirmDelete();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  overlay.addEventListener('pointerdown', e => { if(e.target === overlay) closeConfirmDelete(); });
+
+  const box = document.createElement('div');
+  box.className = 'confirm-box';
+
+  const p = document.createElement('p');
+  p.textContent = 'Supprimer cette tâche ?';
+
+  const taskLine = document.createElement('div');
+  taskLine.className = 'confirm-task-text';
+  taskLine.textContent = '« ' + text + ' »';
+
+  const actions = document.createElement('div');
+  actions.className = 'confirm-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'btn-cancel';
+  cancelBtn.textContent = 'Annuler';
+  cancelBtn.addEventListener('click', closeConfirmDelete);
+
+  const okBtn = document.createElement('button');
+  okBtn.type = 'button';
+  okBtn.className = 'btn-danger';
+  okBtn.textContent = 'Supprimer';
+  okBtn.addEventListener('click', () => {
+    deleteTask(id);
+    closeConfirmDelete();
+  });
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(okBtn);
+  box.appendChild(p);
+  box.appendChild(taskLine);
+  box.appendChild(actions);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  confirmEl = overlay;
+  document.addEventListener('keydown', onConfirmKey, true);
+}
+
 /* ── menu contextuel (clic gauche sur une tâche) ── */
 let ctxMenuEl = null;
 function closeContextMenu(){
@@ -672,7 +770,11 @@ function openContextMenu(x, y, taskId, card){
   delBtn.type = 'button';
   delBtn.className = 'danger';
   delBtn.textContent = 'Supprimer';
-  delBtn.addEventListener('click', () => { closeContextMenu(); deleteTask(taskId); });
+  delBtn.addEventListener('click', () => {
+    closeContextMenu();
+    const t = tasks.find(x => x.id === taskId);
+    requestDeleteTask(taskId, t ? t.text : '');
+  });
 
   menu.appendChild(editBtn);
   menu.appendChild(delBtn);
